@@ -249,7 +249,7 @@ if __name__ == '__main__':
 ---
 
 ### Subtask 3: Tối ưu tuyệt đối với Sàng nguyên tố - `O(N * log(A[i]))`
-**Giới hạn ăn điểm:** `n <= 10^5`, `A[i] <= 10^6`.
+**Giới hạn ăn điểm:** `n <= 10^6`, `A[i] <= 10^6`.
 
 *   **Tối ưu bằng Sàng SPF (Smallest Prime Factor):** Thay vì chia thử mất `O(sqrt(A[i]))`, ta chuẩn bị mảng `spf[x]` lưu ước nguyên tố nhỏ nhất của mọi số từ `1` đến `10^6`.
 *   Việc phân tích thừa số nguyên tố giảm xuống `O(log(A[i]))` và chỉ sử dụng mảng tĩnh. Tổng thời gian cực kì tối ưu.
@@ -263,8 +263,8 @@ using namespace std;
 const int INF = 1e9;
 const int MAX_VAL = 1000005;
 
-int a[100005];
-int dp[100005];
+int a[1000050];
+int dp[1000050];
 int min_step[MAX_VAL];
 int spf[MAX_VAL];
 int factors[20]; // Mảng tạm lưu các thừa số nguyên tố của 1 số
