@@ -7,6 +7,7 @@ b = list(map(int, input().split()))
 c = a + b
 c.sort()
 c = list(set(c))
+c.sort()
 
 for i in range(n):
     a[i] = bisect_left(c, a[i])
