@@ -1,167 +1,262 @@
 """
-generate_tests.py
-------------------
-Drives generators.py + solver.py to produce a complete ROAD.INP / ROAD.OUT
-test suite for the "Con duong" (ROAD) problem.
-
-Subtasks (from the statement):
-  ST1: n <= 1000,    A_i <= 10^6   (30%)
-  ST2: n <= 10^5,    A_i <= 1000   (30%)
-  ST3: n <= 10^5,    A_i <= 10^6   (40%, full constraints)
-
-Every test is built by a generator from generators.py, solved with the
-verified O((n + factors) log maxA) BFS in solver.py (solve_fast), and
-written out as a pair of files:
-    tests/<subtask>/<NN>_<name>.INP
-    tests/<subtask>/<NN>_<name>.OUT
-
-A quick internal check re-validates every generated array against the
-subtask's own (n, maxA) bounds before writing it out, so a bad bound in a
-test plan fails loudly at generation time instead of silently producing an
-invalid test.
+Generator cho bài "Con đường" (ROAD.INP / ROAD.OUT)
+- Cập nhật Subtask 3: N lên tới 10^6.
+- Đã tối ưu tốc độ sinh mảng và phân tích thừa số trong Python để sinh mảng triệu phần tử siêu tốc.
 """
 
+import random
+import sys
 import os
-import time
-import generators as G
-from common import make_1indexed
-from solver import solve_fast
+from collections import deque
 
-OUT_ROOT = os.path.join(os.path.dirname(__file__), "tests")
+MAXA = 10 ** 6
+sys.set_int_max_str_digits(0)
 
-SUBTASKS = {
-    "subtask1": {"n_max": 1000, "a_max": 1_000_000},
-    "subtask2": {"n_max": 100_000, "a_max": 1000},
-    "subtask3": {"n_max": 100_000, "a_max": 1_000_000},
-}
+# ---------------------------------------------------------------------------
+# Sàng nguyên tố nhỏ nhất (SPF) tới 10^6, dùng để phân tích thừa số nhanh
+# ---------------------------------------------------------------------------
+def sieve_spf(maxv):
+    spf = list(range(maxv + 1))
+    i = 2
+    while i * i <= maxv:
+        if spf[i] == i:
+            for j in range(i * i, maxv + 1, i):
+                if spf[j] == j:
+                    spf[j] = i
+        i += 1
+    return spf
 
+SPF = sieve_spf(MAXA)
 
-def _unwrap(result):
-    """Generators either return `A` or `(A, expected_hops)`. Normalize to A."""
-    if isinstance(result, tuple):
-        return result[0]
-    return result
+def prime_factors(x):
+    fs = set()
+    while x > 1:
+        p = SPF[x]
+        fs.add(p)
+        while x % p == 0:
+            x //= p
+    return fs
 
+def primes_up_to(m):
+    if m < 2:
+        return []
+    sieve = bytearray([1]) * (m + 1)
+    sieve[0] = sieve[1] = 0
+    for i in range(2, int(m ** 0.5) + 1):
+        if sieve[i]:
+            sieve[i * i::i] = bytearray(len(range(i * i, m + 1, i)))
+    return [i for i, v in enumerate(sieve) if v]
 
-def _validate(subtask, name, A, n):
-    bounds = SUBTASKS[subtask]
-    assert n == len(A) - 1, f"{subtask}/{name}: len(A)-1={len(A)-1} != n={n}"
-    assert 2 <= n <= bounds["n_max"], f"{subtask}/{name}: n={n} out of bounds"
-    for i in range(1, n + 1):
-        v = A[i]
-        assert 1 <= v <= bounds["a_max"], f"{subtask}/{name}: A[{i}]={v} out of bounds"
+# ---------------------------------------------------------------------------
+# Solver chuẩn (Python) dùng để tự động kiểm tra đáp án
+# ---------------------------------------------------------------------------
+def solve(A):
+    n = len(A)
+    prime_id = {}
+    node_adj = [[] for _ in range(n)]
+    prime_adj = []
 
+    for i, a in enumerate(A):
+        for p in prime_factors(a):
+            pid = prime_id.get(p)
+            if pid is None:
+                pid = n + len(prime_id)
+                prime_id[p] = pid
+                prime_adj.append([])
+            node_adj[i].append(pid)
+            prime_adj[pid - n].append(i)
 
-def write_test(subtask, idx, name, A, n):
-    _validate(subtask, name, A, n)
-    ans = solve_fast(A, n)
+    total = n + len(prime_id)
+    dist = [-1] * total
+    dist[0] = 0
+    dq = deque([0])
+    while dq:
+        u = dq.popleft()
+        neigh = node_adj[u] if u < n else prime_adj[u - n]
+        du1 = dist[u] + 1
+        for v in neigh:
+            if dist[v] == -1:
+                dist[v] = du1
+                dq.append(v)
 
-    folder = os.path.join(OUT_ROOT, subtask)
-    os.makedirs(folder, exist_ok=True)
-    base = f"{idx:02d}_{name}"
-    inp_path = os.path.join(folder, base + ".INP")
-    out_path = os.path.join(folder, base + ".OUT")
+    d = dist[n - 1]
+    return -1 if d == -1 else d // 2
 
-    with open(inp_path, "w") as f:
+def max_achievable_hops(maxA, n=None):
+    limit = int(maxA ** 0.5) + 2
+    plist = primes_up_to(limit)
+    if len(plist) < 2: return 0
+    m = 1
+    while m < len(plist) and plist[m - 1] * plist[m] <= maxA:
+        m += 1
+    cap = m - 1
+    if n is not None: cap = min(cap, n - 1)
+    return cap
+
+def gen_forced_chain(n, maxA, rnd):
+    limit = int(maxA ** 0.5) + 2
+    plist = primes_up_to(limit)
+    m = 1
+    while m < len(plist) and plist[m - 1] * plist[m] <= maxA: m += 1
+    plist = plist[:m]
+    if len(plist) > n: plist = plist[:n]
+    chain_vals = [plist[0]]
+    for i in range(1, len(plist)):
+        chain_vals.append(plist[i - 1] * plist[i])
+    k = len(chain_vals)
+    positions = [1 + round(i * (n - 1) / (k - 1)) for i in range(k)]
+    for i in range(1, k):
+        if positions[i] <= positions[i - 1]: positions[i] = positions[i - 1] + 1
+    positions[-1] = n
+    for i in range(k - 2, -1, -1):
+        if positions[i] >= positions[i + 1]: positions[i] = positions[i + 1] - 1
+    A = [1] * (n + 1)
+    for pos, v in zip(positions, chain_vals): A[pos] = v
+    return A[1:], k - 1, set(plist)
+
+def add_controlled_noise(A, maxA, rnd, pool, chain_primes):
+    n = len(A)
+    pool = [p for p in pool if p not in chain_primes]
+    if not pool: return A
+    for i in range(n):
+        if A[i] != 1: continue
+        if rnd.random() < 0.35:
+            k = rnd.choice([1, 2, 2, 3])
+            cand = rnd.sample(pool, min(len(pool), max(k, 4)))
+            prod, chosen = 1, 0
+            for p in cand:
+                if prod * p <= maxA:
+                    prod *= p
+                    chosen += 1
+                    if chosen >= k: break
+            if prod > 1: A[i] = prod
+    return A
+
+def generate_until_ok(n, maxA, target_ratio=1/3, max_tries=200, seed_base=0):
+    theoretical_cap = max_achievable_hops(maxA, n)
+    threshold = max(1, round(n * target_ratio))
+    threshold = min(threshold, max(1, theoretical_cap - 1))
+    noise_pool_full = primes_up_to(min(2000, maxA))
+
+    for attempt in range(max_tries):
+        rnd = random.Random(seed_base + attempt)
+        A, expected, chain_primes = gen_forced_chain(n, maxA, rnd)
+        A = add_controlled_noise(A, maxA, rnd, noise_pool_full, chain_primes)
+        ans = solve(A)
+        if ans != -1 and ans >= threshold:
+            return A, ans
+    raise RuntimeError("Failed to generate suitable test for sub 1/2.")
+
+# ---------------------------------------------------------------------------
+# SINH TEST ĐẶC BIỆT CHO SUBTASK 3 NHẰM KILL CODE CỦA SUB 2 (N = 10^6)
+# Đã được tối ưu tốc độ mảng (array operations) cho Python
+# ---------------------------------------------------------------------------
+def generate_sub3_exact(n, target_ans, seed):
+    rnd = random.Random(seed)
+    
+    # 1. Tạo chuỗi đúng 'target_ans' bước bằng các nguyên tố nhỏ
+    small_primes = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37]
+    chain_primes = small_primes[:target_ans]
+    
+    chain_vals = [chain_primes[0]]
+    for i in range(1, target_ans):
+        chain_vals.append(chain_primes[i-1] * chain_primes[i])
+    chain_vals.append(chain_primes[-1])
+    
+    # 2. Chuẩn bị "bể dữ liệu nhiễu" để làm TLE/RTE code yếu
+    large_primes = [p for p in primes_up_to(10**6) if 500000 < p <= 1000000]
+    mid_primes = [p for p in primes_up_to(1000) if p > 900]
+    
+    # Tạo trước 1 pool chứa trộn lẫn các giá trị độc (tránh for lặp trong Python)
+    noise_pool = rnd.sample(large_primes, 200) # Lấy 200 nguyên tố lớn
+    
+    # Thêm các tích 2 nguyên tố gần 1000
+    for _ in range(200):
+        p1 = rnd.choice(mid_primes)
+        p2 = rnd.choice(mid_primes)
+        if p1 * p2 <= 10**6:
+            noise_pool.append(p1 * p2)
+            
+    # Random.choices được viết bằng C, sinh ra mảng 1 triệu phần tử siêu tốc
+    A = rnd.choices(noise_pool, k=n)
+    
+    # 3. Ghi đè đường đi chuẩn xác vào mảng
+    positions = [0] + sorted(rnd.sample(range(1, n - 1), target_ans - 1)) + [n - 1]
+    for pos, val in zip(positions, chain_vals):
+        A[pos] = val
+        
+    return A
+
+OUT_DIR = "road_tests"
+os.makedirs(OUT_DIR, exist_ok=True)
+
+def write_test(path_in, A):
+    n = len(A)
+    with open(path_in, "w") as f:
         f.write(f"{n}\n")
-        f.write(" ".join(str(A[i]) for i in range(1, n + 1)))
-        f.write("\n")
-    with open(out_path, "w") as f:
-        f.write(f"{ans}\n")
+        f.write(" ".join(map(str, A)) + "\n")
 
-    return ans
-
-
-def build_subtask1():
-    """n <= 1000, A_i <= 1_000_000."""
-    subtask = "subtask1"
-    n_max, a_max = 1000, 1_000_000
-    plan = [
-        ("sample", lambda: make_1indexed([2, 3, 6, 5, 15])),
-        ("edge_connected", G.gen_edge_connected),
-        ("edge_disconnected", G.gen_edge_disconnected),
-        ("isolated_start", lambda: G.gen_edge_isolated_start(n_max, a_max, 101)),
-        ("isolated_end", lambda: G.gen_edge_isolated_end(n_max, a_max, 102)),
-        ("all_same_small", lambda: G.gen_all_same(50, 6)),
-        ("all_same_max_n", lambda: G.gen_all_same(n_max, 999_983)),
-        ("forced_chain_max", lambda: G.gen_forced_chain(n_max, a_max, 103)),
-        ("greedy_trap", lambda: G.gen_greedy_trap(n_max, a_max, 104)),
-        ("wall_minus_one", lambda: G.gen_wall(n_max - 1, a_max, 105)),
-        ("controlled_random", lambda: G.gen_controlled_random(n_max, a_max, 106)),
-        ("controlled_random_2", lambda: G.gen_controlled_random(n_max, a_max, 107)),
-        ("uniform_random", lambda: G.gen_uniform_random(n_max, a_max, 108)),
-        ("gcd_stress", lambda: G.gen_gcd_stress(n_max, a_max, 109)),
-        ("spf_stress", lambda: G.gen_spf_stress(n_max, a_max, 110)),
-        ("final_boss", lambda: G.gen_final_boss(n_max, a_max, 111)),
-        ("tiny_n2_prime", lambda: make_1indexed([999983, 999979])),
-    ]
-    return subtask, plan
-
-
-def build_subtask2():
-    """n <= 100_000, A_i <= 1000."""
-    subtask = "subtask2"
-    n_max, a_max = 100_000, 1000
-    plan = [
-        ("edge_connected", G.gen_edge_connected),
-        ("edge_disconnected", G.gen_edge_disconnected),
-        ("isolated_start", lambda: G.gen_edge_isolated_start(n_max, a_max, 201)),
-        ("isolated_end", lambda: G.gen_edge_isolated_end(n_max, a_max, 202)),
-        ("all_same_max_n", lambda: G.gen_all_same(n_max, 997)),
-        ("forced_chain_max", lambda: G.gen_forced_chain(n_max, a_max, 203)),
-        ("greedy_trap", lambda: G.gen_greedy_trap(n_max, a_max, 204)),
-        ("wall_minus_one", lambda: G.gen_wall(n_max - 1, a_max, 205)),
-        ("controlled_random", lambda: G.gen_controlled_random(n_max, a_max, 206)),
-        ("controlled_random_2", lambda: G.gen_controlled_random(n_max, a_max, 207)),
-        ("uniform_random", lambda: G.gen_uniform_random(n_max, a_max, 208)),
-        ("spf_stress", lambda: G.gen_spf_stress(n_max, a_max, 209)),
-        ("final_boss", lambda: G.gen_final_boss(n_max, a_max, 210)),
-        ("mid_n_forced_chain", lambda: G.gen_forced_chain(5000, a_max, 211)),
-    ]
-    return subtask, plan
-
-
-def build_subtask3():
-    """n <= 100_000, A_i <= 1_000_000 (full constraints)."""
-    subtask = "subtask3"
-    n_max, a_max = 100_000, 1_000_000
-    plan = [
-        ("edge_connected", G.gen_edge_connected),
-        ("edge_disconnected", G.gen_edge_disconnected),
-        ("isolated_start", lambda: G.gen_edge_isolated_start(n_max, a_max, 301)),
-        ("isolated_end", lambda: G.gen_edge_isolated_end(n_max, a_max, 302)),
-        ("all_same_max_n", lambda: G.gen_all_same(n_max, 999_983)),
-        ("forced_chain_max", lambda: G.gen_forced_chain(n_max, a_max, 303)),
-        ("greedy_trap", lambda: G.gen_greedy_trap(n_max, a_max, 304)),
-        ("wall_minus_one", lambda: G.gen_wall(n_max - 1, a_max, 305)),
-        ("controlled_random", lambda: G.gen_controlled_random(n_max, a_max, 306)),
-        ("controlled_random_2", lambda: G.gen_controlled_random(n_max, a_max, 307)),
-        ("uniform_random", lambda: G.gen_uniform_random(n_max, a_max, 308)),
-        ("gcd_stress", lambda: G.gen_gcd_stress(n_max, a_max, 309)),
-        ("spf_stress", lambda: G.gen_spf_stress(n_max, a_max, 310)),
-        ("final_boss", lambda: G.gen_final_boss(n_max, a_max, 311)),
-        ("final_boss_2", lambda: G.gen_final_boss(n_max, a_max, 312)),
-    ]
-    return subtask, plan
-
-
-def main():
-    total = 0
-    t_start = time.time()
-    for build in (build_subtask1, build_subtask2, build_subtask3):
-        subtask, plan = build()
-        print(f"\n== {subtask} ==")
-        for idx, (name, gen_fn) in enumerate(plan, start=1):
-            t0 = time.time()
-            result = gen_fn()
-            A = _unwrap(result)
-            n = len(A) - 1
-            ans = write_test(subtask, idx, name, A, n)
-            dt = time.time() - t0
-            print(f"  {idx:02d}_{name:24s} n={n:6d}  answer={ans!s:6s} ({dt:.3f}s)")
-            total += 1
-    print(f"\nWrote {total} tests in {time.time() - t_start:.2f}s -> {OUT_ROOT}")
-
+def write_output(path_out, answer):
+    with open(path_out, "w") as f:
+        f.write(f"{answer}\n")
 
 if __name__ == "__main__":
-    main()
+    PLAN_1_2 = [
+        # ---- Subtask 1: n <= 1000, A_i <= 10^6 (6 test) ----
+        (1,   50, 10**6,  101),
+        (1,  200, 10**6,  102),
+        (1,  500, 10**6,  103),
+        (1,  800, 10**6,  104),
+        (1, 1000, 10**6,  105),
+        (1, 1000, 10**6,  106),
+
+        # ---- Subtask 2: n <= 10^5, A_i <= 1000 (6 test) ----
+        (2,   1000, 1000, 201),
+        (2,  10000, 1000, 202),
+        (2,  30000, 1000, 203),
+        (2,  60000, 1000, 204),
+        (2,  90000, 1000, 205),
+        (2, 100000, 1000, 206),
+    ]
+
+    # ---- Subtask 3: n <= 10^6, A_i <= 10^6 (8 test riêng biệt) ----
+    PLAN_3 = [
+        (3,  930000, 10**6, 301, 3),
+        (3,  940000, 10**6, 302, 4),
+        (3,  950000, 10**6, 303, 5),
+        (3,  960000, 10**6, 304, 6),
+        (3,  970000, 10**6, 305, 7),
+        (3,  980000, 10**6, 306, 8),
+        (3,  990000, 10**6, 307, 9),
+        (3, 1000000, 10**6, 308, 10),
+    ]
+
+    counters = {1: 0, 2: 0, 3: 0}
+    summary = []
+    
+    # Sinh Sub 1 và Sub 2
+    for sub, n, maxA, seed in PLAN_1_2:
+        counters[sub] += 1
+        A, ans = generate_until_ok(n=n, maxA=maxA, target_ratio=1/3, seed_base=seed)
+        base = f"ROAD_sub{sub}_test{counters[sub]:02d}"
+        write_test(os.path.join(OUT_DIR, base + ".INP"), A)
+        write_output(os.path.join(OUT_DIR, base + ".OUT"), ans)
+        summary.append((base, n, maxA, ans))
+
+    # Sinh Sub 3 (Sử dụng hàm đã tối ưu tốc độ sinh mảng triệu phần tử)
+    print("\nĐang sinh Sub 3 (N=10^6), thuật toán BFS Python có thể mất vài giây mỗi test, vui lòng đợi...")
+    for sub, n, maxA, seed, target_ans in PLAN_3:
+        counters[sub] += 1
+        A = generate_sub3_exact(n=n, target_ans=target_ans, seed=seed)
+        ans = solve(A)
+        assert ans == target_ans, f"Lỗi sinh Sub 3: Kỳ vọng {target_ans} nhưng thực tế BFS ra {ans}"
+        
+        base = f"ROAD_sub{sub}_test{counters[sub]:02d}"
+        write_test(os.path.join(OUT_DIR, base + ".INP"), A)
+        write_output(os.path.join(OUT_DIR, base + ".OUT"), ans)
+        summary.append((base, n, maxA, ans))
+
+    print("\n==== TỔNG KẾT ====")
+    for base, n, maxA, ans in summary:
+        print(f"{base:28s} n={n:<7} maxA={maxA:<9} answer={ans}")
+    print(f"\nĐã sinh {len(summary)} test tại: {os.path.abspath(OUT_DIR)}")
